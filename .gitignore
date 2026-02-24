@@ -1,0 +1,19 @@
+.DS_Store
+
+# Env files
+.env
+**/.env
+!.env.example
+**/.env.example
+
+# Node artifacts
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+backend/.venv/
+backend/app/__pycache__/
+backend/tests/__pycache__/
