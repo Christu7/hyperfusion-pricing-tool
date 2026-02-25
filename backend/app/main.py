@@ -1,8 +1,8 @@
 import asyncio
-import contextlib
 import csv
 import io
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,7 +58,6 @@ class DataStore:
         self.use_cases: list[str] = []
         self.last_refresh_utc: float | None = None
         self._refresh_lock = asyncio.Lock()
-        self._refresh_task: asyncio.Task[Any] | None = None
 
     async def _fetch_csv(self, client: httpx.AsyncClient, url: str) -> list[dict[str, str]]:
         resp = await client.get(url, timeout=30, follow_redirects=True)
@@ -98,8 +97,6 @@ class DataStore:
         return parsed, use_cases
 
     async def refresh_once(self) -> None:
-        if self._refresh_lock.locked():
-            return
         async with self._refresh_lock:
             pricelist_url = os.getenv("PRICELIST_CSV_URL")
             volume_url = os.getenv("VOLUME_CSV_URL")
@@ -155,15 +152,12 @@ class DataStore:
             self.uplifts = parsed_uplifts
             self.use_case_mappings = parsed_use_case_mappings
             self.use_cases = parsed_use_cases
-            self.last_refresh_utc = asyncio.get_running_loop().time()
+            self.last_refresh_utc = time.time()
 
-    async def refresh_loop(self) -> None:
-        while True:
-            try:
-                await self.refresh_once()
-            except Exception:
-                pass
-            await asyncio.sleep(REFRESH_SECONDS)
+    async def ensure_fresh(self) -> None:
+        now = time.time()
+        if self.last_refresh_utc is None or (now - self.last_refresh_utc) >= REFRESH_SECONDS:
+            await self.refresh_once()
 
 
 store = DataStore()
@@ -178,22 +172,9 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-async def startup() -> None:
-    await store.refresh_once()
-    store._refresh_task = asyncio.create_task(store.refresh_loop())
-
-
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    if store._refresh_task:
-        store._refresh_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await store._refresh_task
-
-
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    await store.ensure_fresh()
     return {
         "ok": True,
         "sku_count": len(store.skus),
@@ -204,6 +185,7 @@ async def health() -> dict[str, Any]:
 
 @app.get("/skus")
 async def get_skus() -> list[dict[str, Any]]:
+    await store.ensure_fresh()
     return [
         {
             "sku_code": sku.sku_code,
@@ -218,6 +200,7 @@ async def get_skus() -> list[dict[str, Any]]:
 
 @app.get("/uplifts")
 async def get_uplifts() -> list[dict[str, Any]]:
+    await store.ensure_fresh()
     return [
         {
             "uplift_name": uplift.uplift_name,
@@ -230,6 +213,7 @@ async def get_uplifts() -> list[dict[str, Any]]:
 
 @app.get("/use-cases")
 async def get_use_cases() -> list[str]:
+    await store.ensure_fresh()
     return store.use_cases
 
 
@@ -288,6 +272,7 @@ def _calculate_sku_quote(sku_code: str, quantity: float, uplift_names: list[str]
 
 @app.post("/quote")
 async def quote(payload: QuoteRequest) -> dict[str, Any]:
+    await store.ensure_fresh()
     if payload.mode == "sku":
         if not payload.sku_code:
             raise HTTPException(status_code=400, detail="sku_code is required for mode=sku")

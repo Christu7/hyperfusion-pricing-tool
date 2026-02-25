@@ -78,3 +78,30 @@ npm run dev
 ```
 
 Default API base URL is `/api` (set via `VITE_API_BASE_URL`).
+
+## Vercel Deployment
+
+Deploy from repository root so Vercel can build the frontend and serve Python API functions in `/api`.
+
+Vercel settings:
+- Framework Preset: `Vite`
+- Root Directory: repository root (`/Users/christiantufro/Desktop/Chris/Code/Codex`)
+- Install Command: `cd frontend && npm install`
+- Build Command: `cd frontend && npm run build`
+- Output Directory: `frontend/dist`
+
+Required backend environment variables on Vercel:
+- `PRICELIST_CSV_URL`
+- `VOLUME_CSV_URL`
+- `UPLIFTS_CSV_URL`
+- `USE_CASE_MAPPINGS_CSV_URL`
+
+Required frontend environment variables on Vercel:
+- `VITE_COMPETITORS_NA_CSV_URL`
+- `VITE_COMPETITORS_EU_CSV_URL`
+- `VITE_COMPETITORS_AP_CSV_URL`
+
+Routing notes:
+- Frontend keeps calling `/api/*`.
+- Vercel rewrites `/api/*` to `/api/index.py/*`.
+- Backend route decorators remain unchanged (`/health`, `/quote`, etc.).
