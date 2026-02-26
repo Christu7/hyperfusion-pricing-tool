@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { apiFetch } from "./apiClient";
 import { buildCompetitorResults, loadCompetitorRates } from "./data/competitorRates";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
@@ -59,9 +60,9 @@ export default function App() {
         setInitialLoading(true);
         setError("");
         const [skusResp, upliftsResp, useCasesResp] = await Promise.all([
-          fetch(`${API_BASE}/skus`),
-          fetch(`${API_BASE}/uplifts`),
-          fetch(`${API_BASE}/use-cases`),
+          apiFetch(`${API_BASE}/skus`),
+          apiFetch(`${API_BASE}/uplifts`),
+          apiFetch(`${API_BASE}/use-cases`),
         ]);
         if (!skusResp.ok || !upliftsResp.ok || !useCasesResp.ok) {
           throw new Error("Failed to load initial data");
@@ -135,7 +136,7 @@ export default function App() {
               region,
               rank_results_by: rankResultsBy,
             };
-      const resp = await fetch(`${API_BASE}/quote`, {
+      const resp = await apiFetch(`${API_BASE}/quote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

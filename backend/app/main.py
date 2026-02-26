@@ -2,12 +2,13 @@ import asyncio
 import csv
 import io
 import os
+import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -172,6 +173,14 @@ app.add_middleware(
 )
 
 
+def require_api_key(x_api_key: str | None = Header(default=None, alias="x-api-key")) -> None:
+    expected_key = (os.getenv("PRICING_API_KEY") or "").strip()
+    if not expected_key:
+        raise HTTPException(status_code=500, detail="Server API key is not configured")
+    if not x_api_key or not secrets.compare_digest(x_api_key, expected_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     await store.ensure_fresh()
@@ -183,7 +192,7 @@ async def health() -> dict[str, Any]:
     }
 
 
-@app.get("/skus")
+@app.get("/skus", dependencies=[Depends(require_api_key)])
 async def get_skus() -> list[dict[str, Any]]:
     await store.ensure_fresh()
     return [
@@ -198,7 +207,7 @@ async def get_skus() -> list[dict[str, Any]]:
     ]
 
 
-@app.get("/uplifts")
+@app.get("/uplifts", dependencies=[Depends(require_api_key)])
 async def get_uplifts() -> list[dict[str, Any]]:
     await store.ensure_fresh()
     return [
@@ -211,7 +220,7 @@ async def get_uplifts() -> list[dict[str, Any]]:
     ]
 
 
-@app.get("/use-cases")
+@app.get("/use-cases", dependencies=[Depends(require_api_key)])
 async def get_use_cases() -> list[str]:
     await store.ensure_fresh()
     return store.use_cases
@@ -270,7 +279,7 @@ def _calculate_sku_quote(sku_code: str, quantity: float, uplift_names: list[str]
     }
 
 
-@app.post("/quote")
+@app.post("/quote", dependencies=[Depends(require_api_key)])
 async def quote(payload: QuoteRequest) -> dict[str, Any]:
     await store.ensure_fresh()
     if payload.mode == "sku":
