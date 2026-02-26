@@ -7,24 +7,47 @@ const GPU_TYPES = ["A100", "B200", "GH200", "H100", "H200", "L40S"];
 const REGIONS = ["North America", "Europe", "Asia-Pacific", "All Regions"];
 const RANK_OPTIONS = ["Best Overall", "Lowest Price", "Provider Name"];
 const PROVIDER_LINKS = {
-  Runpod: "https://www.runpod.io",
-  Latitude: "https://www.latitude.sh",
-  Nebius: "https://nebius.com",
-  Vultr: "https://www.vultr.com",
-  Hyperfusion: "https://www.hyperfusion.io",
+  thundercompute: "https://www.thundercompute.com",
+  digitaloceanpaperspace: "https://www.digitalocean.com/products/paperspace",
+  digitalocean: "https://www.digitalocean.com/products/paperspace",
+  runpod: "https://www.runpod.io",
+  lambdalabs: "https://lambdalabs.com",
+  cudocompute: "https://www.cudocompute.com",
+  hyperstack: "https://www.hyperstack.cloud",
+  tensordock: "https://www.tensordock.com",
+  datacrunch: "https://datacrunch.io",
+  massedcompute: "https://massedcompute.com",
+  voltagepark: "https://www.voltagepark.com",
+  latitude: "https://www.latitude.sh",
+  nebius: "https://nebius.com",
+  vultr: "https://www.vultr.com",
+  deepinfra: "https://deepinfra.com",
+  fireworksai: "https://fireworks.ai",
+  groq: "https://groq.com",
+  huggingface: "https://huggingface.co",
+  hyperscalers: "https://hyperscalers.com",
+  replicate: "https://replicate.com",
+  togetherai: "https://www.together.ai",
+  hyperfusion: "https://www.hyperfusion.io",
 };
+
+function normalizeProviderName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
 
 function currency(value) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    minimumFractionDigits: 3,
+    minimumFractionDigits: 2,
     maximumFractionDigits: 3,
   }).format(value ?? 0);
 }
 
-function percent(value) {
-  return `${((value ?? 0) * 100).toFixed(2)}%`;
+function getProviderLink(providerName) {
+  return PROVIDER_LINKS[normalizeProviderName(providerName)] || "";
 }
 
 function units(value) {
@@ -65,23 +88,36 @@ export default function App() {
           apiFetch(`${API_BASE}/use-cases`),
         ]);
         if (!skusResp.ok || !upliftsResp.ok || !useCasesResp.ok) {
-          throw new Error("Failed to load initial data");
+          const messages = [];
+          for (const resp of [skusResp, upliftsResp, useCasesResp]) {
+            if (!resp.ok) {
+              let detail = "";
+              try {
+                const body = await resp.clone().json();
+                detail = body?.detail || "";
+              } catch {
+                detail = "";
+              }
+              messages.push(`${resp.url} -> ${resp.status}${detail ? ` (${detail})` : ""}`);
+            }
+          }
+          throw new Error(`Failed to load initial data. ${messages.join(" | ")}`);
         }
+
         const skusRaw = await skusResp.json();
         const upliftsRaw = await upliftsResp.json();
         const useCasesRaw = await useCasesResp.json();
         const skusData = Array.isArray(skusRaw) ? skusRaw : [];
         const upliftsData = Array.isArray(upliftsRaw) ? upliftsRaw : [];
         const useCasesData = Array.isArray(useCasesRaw) ? useCasesRaw : [];
+
         setSkus(skusData);
         setUplifts(upliftsData);
         setUseCases(useCasesData);
-        if (skusData.length > 0) {
-          setSelectedSku(skusData[0].sku_code);
-        }
-        if (useCasesData.length > 0) {
-          setSelectedUseCase(useCasesData[0]);
-        }
+
+        if (skusData.length > 0) setSelectedSku(skusData[0].sku_code);
+        if (useCasesData.length > 0) setSelectedUseCase(useCasesData[0]);
+
         setSelectedUplifts(
           new Set(
             upliftsData
@@ -95,13 +131,11 @@ export default function App() {
         setInitialLoading(false);
       }
     }
+
     loadInitialData();
   }, []);
 
-  const orderedUpliftNames = useMemo(
-    () => Array.from(selectedUplifts.values()),
-    [selectedUplifts],
-  );
+  const orderedUpliftNames = useMemo(() => Array.from(selectedUplifts.values()), [selectedUplifts]);
 
   function toggleUplift(name) {
     setSelectedUplifts((prev) => {
@@ -119,6 +153,7 @@ export default function App() {
       setWarning("");
       setQuote(null);
       setProviderResults([]);
+
       const payload =
         mode === "sku"
           ? {
@@ -136,6 +171,7 @@ export default function App() {
               region,
               rank_results_by: rankResultsBy,
             };
+
       const resp = await apiFetch(`${API_BASE}/quote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -155,6 +191,7 @@ export default function App() {
           selectedRegion: region,
           hours: Number(hours),
         });
+
         const hyperfusionHourly = (data.grand_total_usd || 0) / Math.max(Number(hours) || 0, 1);
         const merged = [
           {
@@ -166,9 +203,7 @@ export default function App() {
           ...competitorResults,
         ];
         setProviderResults(merged);
-        if (warnings.length > 0) {
-          setWarning(warnings.join(" "));
-        }
+        if (warnings.length > 0) setWarning(warnings.join(" "));
       }
     } catch (err) {
       setError(err.message || "Unable to calculate quote");
@@ -177,23 +212,24 @@ export default function App() {
     }
   }
 
-  const sortedUseCaseBreakdown = useMemo(() => {
-    if (!quote || !quote.breakdown) return [];
-    return [...quote.breakdown].sort((a, b) => b.cost_usd - a.cost_usd);
-  }, [quote]);
-
   const sortedProviderResults = useMemo(() => {
     const cloned = [...providerResults];
     if (rankResultsBy === "Provider Name") {
       cloned.sort((a, b) => a.providerName.localeCompare(b.providerName));
       return cloned;
     }
+    // "Best Overall" and "Lowest Price" currently both sort by lowest total cost.
     cloned.sort((a, b) => a.totalCost - b.totalCost);
     return cloned;
   }, [providerResults, rankResultsBy]);
 
+  const sortedUseCaseBreakdown = useMemo(() => {
+    if (!quote || !quote.breakdown) return [];
+    return [...quote.breakdown].sort((a, b) => b.cost_usd - a.cost_usd);
+  }, [quote]);
+
   if (initialLoading) {
-    return <main className="container">Loading catalog...</main>;
+    return <main className="dashboard-shell">Loading data...</main>;
   }
 
   const canCalculate =
@@ -202,232 +238,249 @@ export default function App() {
       : Boolean(selectedUseCase && gpuType && region && rankResultsBy) && Number(hours) > 0;
 
   return (
-    <main className="container">
-      <h1>Pricing Tool</h1>
-      <section className="card">
-        <label>
-          Mode
-          <select value={mode} onChange={(e) => setMode(e.target.value)}>
-            <option value="use_case">Use Case</option>
-            <option value="sku">SKU</option>
-          </select>
-        </label>
-      </section>
+    <main className="dashboard-shell">
+      <header className="header">
+        <h1>Hyperfusion Pricing</h1>
+      </header>
 
-      <section className="card">
-        {mode === "sku" ? (
-          <>
-            <label>
-              SKU
-              <select value={selectedSku} onChange={(e) => setSelectedSku(e.target.value)}>
-                {skus.map((sku) => (
-                  <option key={sku.sku_code} value={sku.sku_code}>
-                    {sku.sku_code} - {sku.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+      <section className="panel-card">
+        <div className="control-grid">
+          <label>
+            Mode
+            <select value={mode} onChange={(e) => setMode(e.target.value)}>
+              <option value="use_case">Use Case</option>
+              <option value="sku">SKU</option>
+            </select>
+          </label>
 
-            <label>
-              Quantity
-              <input
-                type="number"
-                min="0.0001"
-                step="any"
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-              />
-            </label>
-          </>
-        ) : (
-          <>
-            <label>
-              Preset by Use Case
-              <select value={selectedUseCase} onChange={(e) => setSelectedUseCase(e.target.value)}>
-                {useCases.map((useCase) => (
-                  <option key={useCase} value={useCase}>
-                    {useCase}
-                  </option>
-                ))}
-              </select>
-            </label>
+          {mode === "use_case" ? (
+            <>
+              <label>
+                Use Case
+                <select value={selectedUseCase} onChange={(e) => setSelectedUseCase(e.target.value)}>
+                  {useCases.map((useCase) => (
+                    <option key={useCase} value={useCase}>
+                      {useCase}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            <label>
-              GPU Type
-              <select value={gpuType} onChange={(e) => setGpuType(e.target.value)}>
-                {GPU_TYPES.map((gpu) => (
-                  <option key={gpu} value={gpu}>
-                    {gpu}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <label>
+                GPU Type
+                <select value={gpuType} onChange={(e) => setGpuType(e.target.value)}>
+                  {GPU_TYPES.map((gpu) => (
+                    <option key={gpu} value={gpu}>
+                      {gpu}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            <label>
-              Number of Hours
-              <input
-                type="range"
-                min="1"
-                max="10000"
-                step="1"
-                value={hours}
-                onChange={(e) => setHours(e.target.value)}
-              />
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={hours}
-                onChange={(e) => setHours(e.target.value)}
-              />
-            </label>
+              <label>
+                Region
+                <select value={region} onChange={(e) => setRegion(e.target.value)}>
+                  {REGIONS.map((regionOption) => (
+                    <option key={regionOption} value={regionOption}>
+                      {regionOption}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            <label>
-              Region
-              <select value={region} onChange={(e) => setRegion(e.target.value)}>
-                {REGIONS.map((regionOption) => (
-                  <option key={regionOption} value={regionOption}>
-                    {regionOption}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <label>
+                Rank By
+                <select value={rankResultsBy} onChange={(e) => setRankResultsBy(e.target.value)}>
+                  {RANK_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            <label>
-              Rank Results By
-              <select value={rankResultsBy} onChange={(e) => setRankResultsBy(e.target.value)}>
-                {RANK_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </>
-        )}
+              <label>
+                Hours
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={hours}
+                  onChange={(e) => setHours(e.target.value)}
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <label>
+                SKU
+                <select value={selectedSku} onChange={(e) => setSelectedSku(e.target.value)}>
+                  {skus.map((sku) => (
+                    <option key={sku.sku_code} value={sku.sku_code}>
+                      {sku.sku_code} - {sku.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-        <fieldset>
-          <legend>Uplifts</legend>
+              <label>
+                Quantity
+                <input
+                  type="number"
+                  min="0.0001"
+                  step="any"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                />
+              </label>
+            </>
+          )}
+        </div>
+
+        <div className="uplift-grid">
           {uplifts.map((u) => (
-            <label className="checkbox" key={u.uplift_name}>
-              <input
-                type="checkbox"
-                checked={selectedUplifts.has(u.uplift_name)}
-                onChange={() => toggleUplift(u.uplift_name)}
-              />
-              {u.uplift_name} ({percent(u.percent_decimal)})
+            <label className="uplift-select-like" key={u.uplift_name}>
+              <span className="uplift-label">Uplift</span>
+              <span className="uplift-control">
+                <input
+                  type="checkbox"
+                  checked={selectedUplifts.has(u.uplift_name)}
+                  onChange={() => toggleUplift(u.uplift_name)}
+                />
+                <strong>{u.uplift_name}</strong>
+                <em>{(u.percent_decimal * 100).toFixed(2)}%</em>
+              </span>
             </label>
           ))}
-        </fieldset>
+        </div>
 
-        <button disabled={calcLoading || !canCalculate} onClick={calculateQuote}>
-          {calcLoading ? "Calculating..." : "Calculate"}
+        <button className="run-button" disabled={calcLoading || !canCalculate} onClick={calculateQuote}>
+          {calcLoading ? "Calculating..." : "Run Analysis"}
         </button>
+
+        {error && <p className="error">{error}</p>}
+        {warning && <p className="warning">{warning}</p>}
       </section>
 
-      {error && <p className="error">{error}</p>}
-      {warning && <p className="warning">{warning}</p>}
+      {quote && mode === "use_case" && (
+        <section className="panel-card">
+          <header className="panel-head">
+            <h2>Use Case Summary</h2>
+          </header>
+          <div className="summary-grid">
+            <article>
+              <h3>Total Cost (Hyperfusion)</h3>
+              <p>{currency(quote.grand_total_usd)}</p>
+            </article>
+            <article>
+              <h3>Hours</h3>
+              <p>{units(quote.hours)}</p>
+            </article>
+            <article>
+              <h3>Cost / Hour</h3>
+              <p>{currency((quote.grand_total_usd || 0) / Math.max(quote.hours || 1, 1))}</p>
+            </article>
+          </div>
+        </section>
+      )}
 
-      {quote && mode === "sku" && (
-        <section className="card">
-          <h2>Quote Breakdown</h2>
-          <p>SKU: {quote.sku.sku_code} - {quote.sku.name}</p>
-          <p>Quantity Raw: {units(quote.quantity_raw)}</p>
-          <p>Unit Multiplier: {units(quote.unit_multiplier)}</p>
-          <p>Relative Units: {units(quote.relative_units)}</p>
-          <p>Base Unit Price: {currency(quote.base_unit_price)}</p>
-          <p>Base Cost: {currency(quote.base_cost)}</p>
-          <p>Discount: {percent(quote.discount_decimal)}</p>
-          <p>Discounted Cost: {currency(quote.discounted_cost)}</p>
-          <p>Total Uplift: {percent(quote.uplift_decimal)}</p>
-          <p>Final Cost: <strong>{currency(quote.final_cost)}</strong></p>
-          <p>
-            Applied Uplifts:{" "}
-            {quote.applied_uplifts.length
-              ? quote.applied_uplifts.map((u) => u.uplift_name).join(", ")
-              : "None"}
-          </p>
+      {providerResults.length > 0 && (
+        <section className="panel-card">
+          <header className="panel-head">
+            <h2>Provider Pricing Overview</h2>
+          </header>
+          <div className="table-wrap">
+            <table className="dash-table">
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Hourly Price</th>
+                  <th>Total Estimated Cost</th>
+                  <th>Region Source</th>
+                  <th>Visit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedProviderResults.map((item) => (
+                  <tr key={item.providerName} className={item.providerName === "Hyperfusion" ? "provider-hyperfusion" : ""}>
+                    <td>{item.providerName}</td>
+                    <td>{currency(item.hourlyPrice)}</td>
+                    <td>{currency(item.totalCost)}</td>
+                    <td>
+                      {item.providerName === "Hyperfusion"
+                        ? "—"
+                        : region === "All Regions"
+                        ? `Best in ${item.regionSource}`
+                        : item.regionSource}
+                    </td>
+                    <td>
+                      {getProviderLink(item.providerName) ? (
+                        <a href={getProviderLink(item.providerName)} target="_blank" rel="noreferrer">
+                          Site
+                        </a>
+                      ) : (
+                        <span className="muted">N/A</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 
       {quote && mode === "use_case" && (
-        <section className="card">
-          <h2>Use Case Quote</h2>
-          <p>Use Case: {quote.use_case}</p>
-          <p>Hours: {units(quote.hours)}</p>
-          <p>Total Cost (Hyperfusion): <strong>{currency(quote.grand_total_usd)}</strong></p>
-          <p>Cost per Hour: <strong>{currency((quote.grand_total_usd || 0) / (quote.hours || 1))}</strong></p>
-
-          <h3>Provider Results</h3>
-          <table className="breakdown-table">
-            <thead>
-              <tr>
-                <th>Provider</th>
-                <th>Hourly Price</th>
-                <th>Total Estimated Cost</th>
-                <th>Link</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedProviderResults.map((item) => (
-                <tr
-                  key={item.providerName}
-                  className={item.providerName === "Hyperfusion" ? "provider-hyperfusion" : ""}
-                >
-                  <td>{item.providerName}</td>
-                  <td>
-                    {currency(item.hourlyPrice)}{" "}
-                    {region === "All Regions" && item.providerName !== "Hyperfusion" ? (
-                      <span className="best-region">Best in: {item.regionSource}</span>
-                    ) : null}
-                  </td>
-                  <td>{currency(item.totalCost)}</td>
-                  <td>
-                    {PROVIDER_LINKS[item.providerName] ? (
-                      <a href={PROVIDER_LINKS[item.providerName]} target="_blank" rel="noreferrer">
-                        Visit Site
-                      </a>
-                    ) : (
-                      <span className="muted">N/A</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {sortedProviderResults.length === 0 && (
+        <section className="panel-card">
+          <header className="panel-head">
+            <h2>SKU Cost Breakdown</h2>
+          </header>
+          <div className="table-wrap">
+            <table className="dash-table">
+              <thead>
                 <tr>
-                  <td colSpan="4">No providers have pricing for this GPU/region selection.</td>
+                  <th>SKU</th>
+                  <th>Name</th>
+                  <th>Units/Hour</th>
+                  <th>Units Total</th>
+                  <th>Cost (USD)</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sortedUseCaseBreakdown.map((item) => (
+                  <tr key={item.sku_code}>
+                    <td>{item.sku_code}</td>
+                    <td>{item.sku_name}</td>
+                    <td>{units(item.units_per_hour)}</td>
+                    <td>{units(item.units_total)}</td>
+                    <td>{currency(item.cost_usd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
-          <table className="breakdown-table">
-            <thead>
-              <tr>
-                <th>SKU</th>
-                <th>Name</th>
-                <th>Units/Hour</th>
-                <th>Units Total</th>
-                <th>Cost (USD)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedUseCaseBreakdown.map((item) => (
-                <tr key={item.sku_code}>
-                  <td>{item.sku_code}</td>
-                  <td>{item.sku_name}</td>
-                  <td>{units(item.units_per_hour)}</td>
-                  <td>{units(item.units_total)}</td>
-                  <td>{currency(item.cost_usd)}</td>
-                </tr>
-              ))}
-              {sortedUseCaseBreakdown.length === 0 && (
-                <tr>
-                  <td colSpan="5">No SKU contributions for this use case/hours combination.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      {quote && mode === "sku" && (
+        <section className="panel-card">
+          <header className="panel-head">
+            <h2>SKU Quote Breakdown</h2>
+          </header>
+          <div className="summary-grid">
+            <article>
+              <h3>SKU</h3>
+              <p>{quote.sku.sku_code} - {quote.sku.name}</p>
+            </article>
+            <article>
+              <h3>Quantity Raw</h3>
+              <p>{units(quote.quantity_raw)}</p>
+            </article>
+            <article>
+              <h3>Final Cost</h3>
+              <p>{currency(quote.final_cost)}</p>
+            </article>
+          </div>
         </section>
       )}
     </main>
