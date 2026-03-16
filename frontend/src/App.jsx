@@ -1,23 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "./apiClient";
-import providerOffersData from "./data/provider_offers.json";
 import {
   COUNTRY_LOCATION_OPTIONS,
   REGION_LOCATION_OPTIONS,
   locationZoneMap,
 } from "./locationZones";
 import { getEstimatedRttMs, getLatencyDeltaVsHyperfusionMs } from "./rttMatrix";
+import { loadCompetitorOffers } from "./loadCompetitorOffers";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 const GPU_TYPES = ["A100", "B200", "GH200", "H100", "H200", "L40S"];
+const REGIONS = ["North America", "Europe", "Asia-Pacific"];
 const RANK_OPTIONS = ["Best Overall", "Lowest Price", "Provider Name"];
 const HYPERFUSION_PROVIDER = "Hyperfusion";
-
-function extractGpuTypeFromSku(sku) {
-  const skuCode = String(sku?.sku_code || "");
-  const skuName = String(sku?.name || "");
-  return GPU_TYPES.find((gpu) => skuCode.includes(gpu) || skuName.includes(gpu)) || null;
-}
 
 function getCheapestOffersForGpu(offers, gpu) {
   const cheapestByProvider = new Map();
@@ -26,7 +21,7 @@ function getCheapestOffersForGpu(offers, gpu) {
     if (!offer || !offer.provider || offer.gpu !== gpu) continue;
 
     const current = cheapestByProvider.get(offer.provider);
-    if (!current || offer.price_per_gpu_hour < current.price_per_gpu_hour) {
+    if (!current || offer.price_per_hour < current.price_per_hour) {
       cheapestByProvider.set(offer.provider, offer);
     }
   }
@@ -60,6 +55,7 @@ export default function App() {
   const [selectedUseCase, setSelectedUseCase] = useState("");
   const [hours, setHours] = useState(100);
   const [gpuType, setGpuType] = useState(GPU_TYPES[0]);
+  const [region, setRegion] = useState(REGIONS[0]);
   const [selectedLocation, setSelectedLocation] = useState("India");
   const [rankResultsBy, setRankResultsBy] = useState(RANK_OPTIONS[0]);
   const [selectedUplifts, setSelectedUplifts] = useState(new Set());
@@ -67,6 +63,11 @@ export default function App() {
   const [calcLoading, setCalcLoading] = useState(false);
   const [error, setError] = useState("");
   const [quote, setQuote] = useState(null);
+  const [competitorOffersByRegion, setCompetitorOffersByRegion] = useState({
+    "North America": [],
+    Europe: [],
+    "Asia-Pacific": [],
+  });
   const selectedLatencyZone = locationZoneMap[selectedLocation] || "global";
 
   useEffect(() => {
@@ -158,6 +159,7 @@ export default function App() {
               hours: Number(hours),
               uplift_names: orderedUpliftNames,
               gpu_type: gpuType,
+              region,
               rank_results_by: rankResultsBy,
             };
 
@@ -171,6 +173,11 @@ export default function App() {
         throw new Error(data.detail || "Quote request failed");
       }
       setQuote(data);
+
+      if (mode === "use_case") {
+        const competitorOffers = await loadCompetitorOffers();
+        setCompetitorOffersByRegion(competitorOffers);
+      }
     } catch (err) {
       setError(err.message || "Unable to calculate quote");
     } finally {
@@ -181,19 +188,15 @@ export default function App() {
   const comparisonRows = useMemo(() => {
     if (!quote || mode !== "use_case") return [];
 
-    const matchingHyperfusionSku = skus.find((sku) => extractGpuTypeFromSku(sku) === gpuType);
-    const hyperfusionPricePerGpuHour =
-      matchingHyperfusionSku && Number(matchingHyperfusionSku.unit) > 0
-        ? Number(matchingHyperfusionSku.base_unit_price) / Number(matchingHyperfusionSku.unit)
-        : null;
+    const hyperfusionPricePerHour = (quote.grand_total_usd || 0) / Math.max(Number(hours) || 1, 1);
     const hyperfusionRow = {
       provider: HYPERFUSION_PROVIDER,
       gpu: gpuType,
-      price_per_gpu_hour: hyperfusionPricePerGpuHour,
+      price_per_hour: hyperfusionPricePerHour,
       provider_region: "MENA",
     };
 
-    const competitorRows = (providerOffersData || []).filter((row) => row.provider);
+    const competitorRows = competitorOffersByRegion[region] || [];
     const filteredRows = getCheapestOffersForGpu([hyperfusionRow, ...competitorRows], gpuType);
     const hyperfusionLatencyMs = getEstimatedRttMs(selectedLatencyZone, "MENA");
 
@@ -210,17 +213,17 @@ export default function App() {
       .sort((a, b) => {
         if (a.provider === HYPERFUSION_PROVIDER) return -1;
         if (b.provider === HYPERFUSION_PROVIDER) return 1;
-        if (a.price_per_gpu_hour == null) return 1;
-        if (b.price_per_gpu_hour == null) return -1;
-        if (a.price_per_gpu_hour !== b.price_per_gpu_hour) {
-          return a.price_per_gpu_hour - b.price_per_gpu_hour;
+        if (a.price_per_hour == null) return 1;
+        if (b.price_per_hour == null) return -1;
+        if (a.price_per_hour !== b.price_per_hour) {
+          return a.price_per_hour - b.price_per_hour;
         }
         if (a.estimated_latency_ms !== b.estimated_latency_ms) {
           return a.estimated_latency_ms - b.estimated_latency_ms;
         }
         return a.provider.localeCompare(b.provider);
       });
-  }, [gpuType, mode, quote, selectedLatencyZone, skus]);
+  }, [competitorOffersByRegion, gpuType, hours, mode, quote, region, selectedLatencyZone]);
 
   const sortedUseCaseBreakdown = useMemo(() => {
     if (!quote || !quote.breakdown) return [];
@@ -234,7 +237,7 @@ export default function App() {
   const canCalculate =
     mode === "sku"
       ? Boolean(selectedSku) && Number(quantity) > 0
-      : Boolean(selectedUseCase && gpuType && rankResultsBy) && Number(hours) > 0;
+      : Boolean(selectedUseCase && gpuType && region && rankResultsBy) && Number(hours) > 0;
 
   return (
     <main className="dashboard-shell">
@@ -271,6 +274,17 @@ export default function App() {
                   {GPU_TYPES.map((gpu) => (
                     <option key={gpu} value={gpu}>
                       {gpu}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Region
+                <select value={region} onChange={(e) => setRegion(e.target.value)}>
+                  {REGIONS.map((regionOption) => (
+                    <option key={regionOption} value={regionOption}>
+                      {regionOption}
                     </option>
                   ))}
                 </select>
@@ -399,7 +413,7 @@ export default function App() {
                 <tr>
                   <th>Provider</th>
                   <th>GPU</th>
-                  <th>Estimated $/GPU/hr</th>
+                  <th>Estimated Cost / Hour</th>
                   <th>Latency</th>
                   <th>Region</th>
                 </tr>
@@ -409,7 +423,7 @@ export default function App() {
                   <tr key={`${item.provider}-${item.gpu}-${item.provider_region}`} className={item.provider === HYPERFUSION_PROVIDER ? "provider-hyperfusion" : ""}>
                     <td>{item.provider}</td>
                     <td>{item.gpu}</td>
-                    <td>{item.price_per_gpu_hour == null ? "N/A" : currency(item.price_per_gpu_hour)}</td>
+                    <td>{item.price_per_hour == null ? "N/A" : currency(item.price_per_hour)}</td>
                     <td>
                       <div className="latency-cell">
                         <span>{item.estimated_latency_ms} ms</span>
@@ -442,7 +456,7 @@ export default function App() {
                 <tr>
                   <th>Provider</th>
                   <th>GPU</th>
-                  <th>Estimated $/GPU/hr</th>
+                  <th>Estimated Cost / Hour</th>
                   <th>Latency</th>
                   <th>Region</th>
                 </tr>
