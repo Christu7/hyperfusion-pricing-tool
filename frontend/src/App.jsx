@@ -10,7 +10,7 @@ import { loadCompetitorOffers } from "./loadCompetitorOffers";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 const GPU_TYPES = ["A100", "B200", "GH200", "H100", "H200", "L40S"];
-const REGIONS = ["North America", "Europe", "Asia-Pacific"];
+const REGIONS = ["All Regions", "North America", "Europe", "Asia-Pacific"];
 const RANK_OPTIONS = ["Best Overall", "Lowest Price", "Provider Name"];
 const HYPERFUSION_PROVIDER = "Hyperfusion";
 
@@ -196,7 +196,14 @@ export default function App() {
       provider_region: "MENA",
     };
 
-    const competitorRows = competitorOffersByRegion[region] || [];
+    const competitorRows =
+      region === "All Regions"
+        ? [
+            ...(competitorOffersByRegion["North America"] || []),
+            ...(competitorOffersByRegion.Europe || []),
+            ...(competitorOffersByRegion["Asia-Pacific"] || []),
+          ]
+        : competitorOffersByRegion[region] || [];
     const filteredRows = getCheapestOffersForGpu([hyperfusionRow, ...competitorRows], gpuType);
     const hyperfusionLatencyMs = getEstimatedRttMs(selectedLatencyZone, "MENA");
 
@@ -412,7 +419,6 @@ export default function App() {
               <thead>
                 <tr>
                   <th>Provider</th>
-                  <th>GPU</th>
                   <th>Estimated Cost / Hour</th>
                   <th>Latency</th>
                   <th>Region</th>
@@ -422,7 +428,6 @@ export default function App() {
                 {comparisonRows.map((item) => (
                   <tr key={`${item.provider}-${item.gpu}-${item.provider_region}`} className={item.provider === HYPERFUSION_PROVIDER ? "provider-hyperfusion" : ""}>
                     <td>{item.provider}</td>
-                    <td>{item.gpu}</td>
                     <td>{item.price_per_hour == null ? "N/A" : currency(item.price_per_hour)}</td>
                     <td>
                       <div className="latency-cell">
@@ -455,7 +460,6 @@ export default function App() {
               <thead>
                 <tr>
                   <th>Provider</th>
-                  <th>GPU</th>
                   <th>Estimated Cost / Hour</th>
                   <th>Latency</th>
                   <th>Region</th>
@@ -463,7 +467,7 @@ export default function App() {
               </thead>
               <tbody>
                 <tr>
-                  <td colSpan="5">No provider offers are available for the selected GPU.</td>
+                  <td colSpan="4">No provider offers are available for the selected GPU.</td>
                 </tr>
               </tbody>
             </table>
