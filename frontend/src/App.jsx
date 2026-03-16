@@ -1,40 +1,31 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "./apiClient";
-import { buildCompetitorResults, loadCompetitorRates } from "./data/competitorRates";
+import providerOffersData from "./data/provider_offers.json";
+import {
+  COUNTRY_LOCATION_OPTIONS,
+  REGION_LOCATION_OPTIONS,
+  locationZoneMap,
+} from "./locationZones";
+import { getEstimatedRttMs, getLatencyDeltaVsHyperfusionMs } from "./rttMatrix";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 const GPU_TYPES = ["A100", "B200", "GH200", "H100", "H200", "L40S"];
-const REGIONS = ["North America", "Europe", "Asia-Pacific", "All Regions"];
 const RANK_OPTIONS = ["Best Overall", "Lowest Price", "Provider Name"];
-const PROVIDER_LINKS = {
-  thundercompute: "https://www.thundercompute.com",
-  digitaloceanpaperspace: "https://www.digitalocean.com/products/paperspace",
-  digitalocean: "https://www.digitalocean.com/products/paperspace",
-  runpod: "https://www.runpod.io",
-  lambdalabs: "https://lambdalabs.com",
-  cudocompute: "https://www.cudocompute.com",
-  hyperstack: "https://www.hyperstack.cloud",
-  tensordock: "https://www.tensordock.com",
-  datacrunch: "https://datacrunch.io",
-  massedcompute: "https://massedcompute.com",
-  voltagepark: "https://www.voltagepark.com",
-  latitude: "https://www.latitude.sh",
-  nebius: "https://nebius.com",
-  vultr: "https://www.vultr.com",
-  deepinfra: "https://deepinfra.com",
-  fireworksai: "https://fireworks.ai",
-  groq: "https://groq.com",
-  huggingface: "https://huggingface.co",
-  hyperscalers: "https://hyperscalers.com",
-  replicate: "https://replicate.com",
-  togetherai: "https://www.together.ai",
-  hyperfusion: "https://www.hyperfusion.io",
-};
+const HYPERFUSION_PROVIDER = "Hyperfusion";
 
-function normalizeProviderName(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+function getCheapestOffersForGpu(offers, gpu) {
+  const cheapestByProvider = new Map();
+
+  for (const offer of offers) {
+    if (!offer || !offer.provider || offer.gpu !== gpu) continue;
+
+    const current = cheapestByProvider.get(offer.provider);
+    if (!current || offer.price_per_gpu_hour < current.price_per_gpu_hour) {
+      cheapestByProvider.set(offer.provider, offer);
+    }
+  }
+
+  return [...cheapestByProvider.values()];
 }
 
 function currency(value) {
@@ -46,15 +37,24 @@ function currency(value) {
   }).format(value ?? 0);
 }
 
-function getProviderLink(providerName) {
-  return PROVIDER_LINKS[normalizeProviderName(providerName)] || "";
-}
-
 function units(value) {
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value ?? 0);
+}
+
+function getGpuCountFromBreakdown(breakdown, selectedGpu) {
+  if (!Array.isArray(breakdown)) return 0;
+
+  return breakdown.reduce((sum, item) => {
+    const skuCode = String(item?.sku_code || "");
+    const skuName = String(item?.sku_name || "");
+    const matchesSelectedGpu = skuCode.includes(selectedGpu) || skuName.includes(selectedGpu);
+    if (!matchesSelectedGpu) return sum;
+
+    return sum + Number(item?.units_per_hour || 0);
+  }, 0);
 }
 
 export default function App() {
@@ -67,15 +67,14 @@ export default function App() {
   const [selectedUseCase, setSelectedUseCase] = useState("");
   const [hours, setHours] = useState(100);
   const [gpuType, setGpuType] = useState(GPU_TYPES[0]);
-  const [region, setRegion] = useState(REGIONS[0]);
+  const [selectedLocation, setSelectedLocation] = useState("India");
   const [rankResultsBy, setRankResultsBy] = useState(RANK_OPTIONS[0]);
   const [selectedUplifts, setSelectedUplifts] = useState(new Set());
   const [initialLoading, setInitialLoading] = useState(true);
   const [calcLoading, setCalcLoading] = useState(false);
   const [error, setError] = useState("");
-  const [warning, setWarning] = useState("");
   const [quote, setQuote] = useState(null);
-  const [providerResults, setProviderResults] = useState([]);
+  const selectedLatencyZone = locationZoneMap[selectedLocation] || "global";
 
   useEffect(() => {
     async function loadInitialData() {
@@ -150,9 +149,7 @@ export default function App() {
     try {
       setCalcLoading(true);
       setError("");
-      setWarning("");
       setQuote(null);
-      setProviderResults([]);
 
       const payload =
         mode === "sku"
@@ -168,7 +165,6 @@ export default function App() {
               hours: Number(hours),
               uplift_names: orderedUpliftNames,
               gpu_type: gpuType,
-              region,
               rank_results_by: rankResultsBy,
             };
 
@@ -182,29 +178,6 @@ export default function App() {
         throw new Error(data.detail || "Quote request failed");
       }
       setQuote(data);
-
-      if (mode === "use_case") {
-        const { data: competitorData, warnings } = await loadCompetitorRates();
-        const competitorResults = buildCompetitorResults({
-          dataByRegion: competitorData,
-          selectedGPU: gpuType,
-          selectedRegion: region,
-          hours: Number(hours),
-        });
-
-        const hyperfusionHourly = (data.grand_total_usd || 0) / Math.max(Number(hours) || 0, 1);
-        const merged = [
-          {
-            providerName: "Hyperfusion",
-            hourlyPrice: hyperfusionHourly,
-            totalCost: data.grand_total_usd || 0,
-            regionSource: region === "All Regions" ? "All Regions" : region,
-          },
-          ...competitorResults,
-        ];
-        setProviderResults(merged);
-        if (warnings.length > 0) setWarning(warnings.join(" "));
-      }
     } catch (err) {
       setError(err.message || "Unable to calculate quote");
     } finally {
@@ -212,16 +185,46 @@ export default function App() {
     }
   }
 
-  const sortedProviderResults = useMemo(() => {
-    const cloned = [...providerResults];
-    if (rankResultsBy === "Provider Name") {
-      cloned.sort((a, b) => a.providerName.localeCompare(b.providerName));
-      return cloned;
-    }
-    // "Best Overall" and "Lowest Price" currently both sort by lowest total cost.
-    cloned.sort((a, b) => a.totalCost - b.totalCost);
-    return cloned;
-  }, [providerResults, rankResultsBy]);
+  const comparisonRows = useMemo(() => {
+    if (!quote || mode !== "use_case") return [];
+
+    const gpuCount = getGpuCountFromBreakdown(quote.breakdown, gpuType);
+    const normalizedGpuHours = gpuCount * Math.max(Number(hours) || 0, 0);
+    const hyperfusionPricePerGpuHour =
+      normalizedGpuHours > 0 ? (quote.grand_total_usd || 0) / normalizedGpuHours : 0;
+    const hyperfusionRow = {
+      provider: HYPERFUSION_PROVIDER,
+      gpu: gpuType,
+      price_per_gpu_hour: hyperfusionPricePerGpuHour,
+      provider_region: "MENA",
+    };
+
+    const competitorRows = (providerOffersData || []).filter((row) => row.provider);
+    const filteredRows = getCheapestOffersForGpu([hyperfusionRow, ...competitorRows], gpuType);
+    const hyperfusionLatencyMs = getEstimatedRttMs(selectedLatencyZone, "MENA");
+
+    return filteredRows
+      .map((row) => {
+        const estimatedLatencyMs = getEstimatedRttMs(selectedLatencyZone, row.provider_region);
+
+        return {
+          ...row,
+          estimated_latency_ms: estimatedLatencyMs,
+          latency_delta_vs_hyperfusion_ms: getLatencyDeltaVsHyperfusionMs(estimatedLatencyMs, hyperfusionLatencyMs),
+        };
+      })
+      .sort((a, b) => {
+        if (a.provider === HYPERFUSION_PROVIDER) return -1;
+        if (b.provider === HYPERFUSION_PROVIDER) return 1;
+        if (a.price_per_gpu_hour !== b.price_per_gpu_hour) {
+          return a.price_per_gpu_hour - b.price_per_gpu_hour;
+        }
+        if (a.estimated_latency_ms !== b.estimated_latency_ms) {
+          return a.estimated_latency_ms - b.estimated_latency_ms;
+        }
+        return a.provider.localeCompare(b.provider);
+      });
+  }, [gpuType, hours, mode, quote, selectedLatencyZone]);
 
   const sortedUseCaseBreakdown = useMemo(() => {
     if (!quote || !quote.breakdown) return [];
@@ -235,7 +238,7 @@ export default function App() {
   const canCalculate =
     mode === "sku"
       ? Boolean(selectedSku) && Number(quantity) > 0
-      : Boolean(selectedUseCase && gpuType && region && rankResultsBy) && Number(hours) > 0;
+      : Boolean(selectedUseCase && gpuType && rankResultsBy) && Number(hours) > 0;
 
   return (
     <main className="dashboard-shell">
@@ -278,11 +281,17 @@ export default function App() {
               </label>
 
               <label>
-                Region
-                <select value={region} onChange={(e) => setRegion(e.target.value)}>
-                  {REGIONS.map((regionOption) => (
-                    <option key={regionOption} value={regionOption}>
-                      {regionOption}
+                User Location
+                <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)}>
+                  {COUNTRY_LOCATION_OPTIONS.map((location) => (
+                    <option key={location} value={location}>
+                      {location}
+                    </option>
+                  ))}
+                  <option disabled>──────────</option>
+                  {REGION_LOCATION_OPTIONS.map((location) => (
+                    <option key={location} value={location}>
+                      {location}
                     </option>
                   ))}
                 </select>
@@ -359,7 +368,6 @@ export default function App() {
         </button>
 
         {error && <p className="error">{error}</p>}
-        {warning && <p className="warning">{warning}</p>}
       </section>
 
       {quote && mode === "use_case" && (
@@ -384,49 +392,76 @@ export default function App() {
         </section>
       )}
 
-      {providerResults.length > 0 && (
+      {comparisonRows.length > 0 && (
         <section className="panel-card">
           <header className="panel-head">
-            <h2>Provider Pricing Overview</h2>
+            <h2>Provider Pricing Results</h2>
           </header>
           <div className="table-wrap">
             <table className="dash-table">
               <thead>
                 <tr>
                   <th>Provider</th>
-                  <th>Hourly Price</th>
-                  <th>Total Estimated Cost</th>
-                  <th>Region Source</th>
-                  <th>Visit</th>
+                  <th>GPU</th>
+                  <th>Estimated $/GPU/hr</th>
+                  <th>Latency</th>
+                  <th>Region</th>
                 </tr>
               </thead>
               <tbody>
-                {sortedProviderResults.map((item) => (
-                  <tr key={item.providerName} className={item.providerName === "Hyperfusion" ? "provider-hyperfusion" : ""}>
-                    <td>{item.providerName}</td>
-                    <td>{currency(item.hourlyPrice)}</td>
-                    <td>{currency(item.totalCost)}</td>
+                {comparisonRows.map((item) => (
+                  <tr key={`${item.provider}-${item.gpu}-${item.provider_region}`} className={item.provider === HYPERFUSION_PROVIDER ? "provider-hyperfusion" : ""}>
+                    <td>{item.provider}</td>
+                    <td>{item.gpu}</td>
+                    <td>{currency(item.price_per_gpu_hour)}</td>
                     <td>
-                      {item.providerName === "Hyperfusion"
-                        ? "—"
-                        : region === "All Regions"
-                        ? `Best in ${item.regionSource}`
-                        : item.regionSource}
+                      <div className="latency-cell">
+                        <span>{item.estimated_latency_ms} ms</span>
+                        {item.provider !== HYPERFUSION_PROVIDER && item.latency_delta_vs_hyperfusion_ms > 0 ? (
+                          <span className="latency-delta">+{item.latency_delta_vs_hyperfusion_ms} ms vs Hyperfusion</span>
+                        ) : null}
+                      </div>
                     </td>
-                    <td>
-                      {getProviderLink(item.providerName) ? (
-                        <a href={getProviderLink(item.providerName)} target="_blank" rel="noreferrer">
-                          Site
-                        </a>
-                      ) : (
-                        <span className="muted">N/A</span>
-                      )}
-                    </td>
+                    <td>{item.provider_region}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          <p className="table-disclaimer">
+            Estimated network RTT based on regional averages.
+            Actual latency depends on network conditions.
+          </p>
+        </section>
+      )}
+
+      {quote && mode === "use_case" && comparisonRows.length === 0 && (
+        <section className="panel-card">
+          <header className="panel-head">
+            <h2>Provider Pricing Results</h2>
+          </header>
+          <div className="table-wrap">
+            <table className="dash-table">
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>GPU</th>
+                  <th>Estimated $/GPU/hr</th>
+                  <th>Latency</th>
+                  <th>Region</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colSpan="5">No provider offers are available for the selected GPU.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="table-disclaimer">
+            Estimated network RTT based on regional averages.
+            Actual latency depends on network conditions.
+          </p>
         </section>
       )}
 

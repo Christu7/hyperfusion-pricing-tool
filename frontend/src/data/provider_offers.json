@@ -1,0 +1,131 @@
+[
+  {
+    "_comment": "Hyperscaler prices are normalized estimates per GPU-hour based on public pricing."
+  },
+  {
+    "provider": "AWS",
+    "gpu": "A100",
+    "price_per_gpu_hour": 3.88,
+    "provider_region": "North America"
+  },
+  {
+    "provider": "AWS",
+    "gpu": "A100",
+    "price_per_gpu_hour": 4.05,
+    "provider_region": "Europe"
+  },
+  {
+    "provider": "AWS",
+    "gpu": "H100",
+    "price_per_gpu_hour": 4.98,
+    "provider_region": "North America"
+  },
+  {
+    "provider": "AWS",
+    "gpu": "H100",
+    "price_per_gpu_hour": 5.12,
+    "provider_region": "Europe"
+  },
+  {
+    "provider": "AWS",
+    "gpu": "H200",
+    "price_per_gpu_hour": 6.74,
+    "provider_region": "North America"
+  },
+  {
+    "provider": "AWS",
+    "gpu": "L40S",
+    "price_per_gpu_hour": 2.34,
+    "provider_region": "Europe"
+  },
+  {
+    "provider": "AWS",
+    "gpu": "L40S",
+    "price_per_gpu_hour": 2.41,
+    "provider_region": "Asia-Pacific"
+  },
+  {
+    "provider": "Azure",
+    "gpu": "A100",
+    "price_per_gpu_hour": 3.95,
+    "provider_region": "Europe"
+  },
+  {
+    "provider": "Azure",
+    "gpu": "A100",
+    "price_per_gpu_hour": 4.1,
+    "provider_region": "North America"
+  },
+  {
+    "provider": "Azure",
+    "gpu": "H100",
+    "price_per_gpu_hour": 4.85,
+    "provider_region": "Europe"
+  },
+  {
+    "provider": "Azure",
+    "gpu": "H100",
+    "price_per_gpu_hour": 5.1,
+    "provider_region": "North America"
+  },
+  {
+    "provider": "Azure",
+    "gpu": "H200",
+    "price_per_gpu_hour": 6.58,
+    "provider_region": "Europe"
+  },
+  {
+    "provider": "Azure",
+    "gpu": "L40S",
+    "price_per_gpu_hour": 2.29,
+    "provider_region": "North America"
+  },
+  {
+    "provider": "Azure",
+    "gpu": "L40S",
+    "price_per_gpu_hour": 2.36,
+    "provider_region": "Asia-Pacific"
+  },
+  {
+    "provider": "Google Cloud",
+    "gpu": "A100",
+    "price_per_gpu_hour": 3.79,
+    "provider_region": "North America"
+  },
+  {
+    "provider": "Google Cloud",
+    "gpu": "A100",
+    "price_per_gpu_hour": 3.92,
+    "provider_region": "Europe"
+  },
+  {
+    "provider": "Google Cloud",
+    "gpu": "H100",
+    "price_per_gpu_hour": 4.73,
+    "provider_region": "North America"
+  },
+  {
+    "provider": "Google Cloud",
+    "gpu": "H100",
+    "price_per_gpu_hour": 4.91,
+    "provider_region": "Europe"
+  },
+  {
+    "provider": "Google Cloud",
+    "gpu": "H200",
+    "price_per_gpu_hour": 6.43,
+    "provider_region": "North America"
+  },
+  {
+    "provider": "Google Cloud",
+    "gpu": "L40S",
+    "price_per_gpu_hour": 2.21,
+    "provider_region": "North America"
+  },
+  {
+    "provider": "Google Cloud",
+    "gpu": "L40S",
+    "price_per_gpu_hour": 2.28,
+    "provider_region": "Europe"
+  }
+]
