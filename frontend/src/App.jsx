@@ -13,6 +13,12 @@ const GPU_TYPES = ["A100", "B200", "GH200", "H100", "H200", "L40S"];
 const RANK_OPTIONS = ["Best Overall", "Lowest Price", "Provider Name"];
 const HYPERFUSION_PROVIDER = "Hyperfusion";
 
+function extractGpuTypeFromSku(sku) {
+  const skuCode = String(sku?.sku_code || "");
+  const skuName = String(sku?.name || "");
+  return GPU_TYPES.find((gpu) => skuCode.includes(gpu) || skuName.includes(gpu)) || null;
+}
+
 function getCheapestOffersForGpu(offers, gpu) {
   const cheapestByProvider = new Map();
 
@@ -42,19 +48,6 @@ function units(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value ?? 0);
-}
-
-function getGpuCountFromBreakdown(breakdown, selectedGpu) {
-  if (!Array.isArray(breakdown)) return 0;
-
-  return breakdown.reduce((sum, item) => {
-    const skuCode = String(item?.sku_code || "");
-    const skuName = String(item?.sku_name || "");
-    const matchesSelectedGpu = skuCode.includes(selectedGpu) || skuName.includes(selectedGpu);
-    if (!matchesSelectedGpu) return sum;
-
-    return sum + Number(item?.units_per_hour || 0);
-  }, 0);
 }
 
 export default function App() {
@@ -188,10 +181,11 @@ export default function App() {
   const comparisonRows = useMemo(() => {
     if (!quote || mode !== "use_case") return [];
 
-    const gpuCount = getGpuCountFromBreakdown(quote.breakdown, gpuType);
-    const normalizedGpuHours = gpuCount * Math.max(Number(hours) || 0, 0);
+    const matchingHyperfusionSku = skus.find((sku) => extractGpuTypeFromSku(sku) === gpuType);
     const hyperfusionPricePerGpuHour =
-      normalizedGpuHours > 0 ? (quote.grand_total_usd || 0) / normalizedGpuHours : 0;
+      matchingHyperfusionSku && Number(matchingHyperfusionSku.unit) > 0
+        ? Number(matchingHyperfusionSku.base_unit_price) / Number(matchingHyperfusionSku.unit)
+        : null;
     const hyperfusionRow = {
       provider: HYPERFUSION_PROVIDER,
       gpu: gpuType,
@@ -216,6 +210,8 @@ export default function App() {
       .sort((a, b) => {
         if (a.provider === HYPERFUSION_PROVIDER) return -1;
         if (b.provider === HYPERFUSION_PROVIDER) return 1;
+        if (a.price_per_gpu_hour == null) return 1;
+        if (b.price_per_gpu_hour == null) return -1;
         if (a.price_per_gpu_hour !== b.price_per_gpu_hour) {
           return a.price_per_gpu_hour - b.price_per_gpu_hour;
         }
@@ -224,7 +220,7 @@ export default function App() {
         }
         return a.provider.localeCompare(b.provider);
       });
-  }, [gpuType, hours, mode, quote, selectedLatencyZone]);
+  }, [gpuType, mode, quote, selectedLatencyZone, skus]);
 
   const sortedUseCaseBreakdown = useMemo(() => {
     if (!quote || !quote.breakdown) return [];
@@ -413,7 +409,7 @@ export default function App() {
                   <tr key={`${item.provider}-${item.gpu}-${item.provider_region}`} className={item.provider === HYPERFUSION_PROVIDER ? "provider-hyperfusion" : ""}>
                     <td>{item.provider}</td>
                     <td>{item.gpu}</td>
-                    <td>{currency(item.price_per_gpu_hour)}</td>
+                    <td>{item.price_per_gpu_hour == null ? "N/A" : currency(item.price_per_gpu_hour)}</td>
                     <td>
                       <div className="latency-cell">
                         <span>{item.estimated_latency_ms} ms</span>
