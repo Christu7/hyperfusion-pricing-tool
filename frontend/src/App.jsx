@@ -45,6 +45,10 @@ function units(value) {
   }).format(value ?? 0);
 }
 
+function isPositiveFiniteNumber(value) {
+  return Number.isFinite(value) && value > 0;
+}
+
 export default function App() {
   const [mode] = useState("use_case");
   const [skus, setSkus] = useState([]);
@@ -207,7 +211,7 @@ export default function App() {
     const filteredRows = getCheapestOffersForGpu([hyperfusionRow, ...competitorRows], gpuType);
     const hyperfusionLatencyMs = getEstimatedRttMs(selectedLatencyZone, "MENA");
 
-    return filteredRows
+    const rowsWithLatency = filteredRows
       .map((row) => {
         const estimatedLatencyMs = getEstimatedRttMs(selectedLatencyZone, row.provider_region);
 
@@ -215,6 +219,37 @@ export default function App() {
           ...row,
           estimated_latency_ms: estimatedLatencyMs,
           latency_delta_vs_hyperfusion_ms: getLatencyDeltaVsHyperfusionMs(estimatedLatencyMs, hyperfusionLatencyMs),
+        };
+      })
+      .filter((row) => row);
+
+    const validRowsForValueIndex = rowsWithLatency.filter(
+      (row) => isPositiveFiniteNumber(row.price_per_hour) && isPositiveFiniteNumber(row.estimated_latency_ms),
+    );
+    const lowestVisiblePrice = validRowsForValueIndex.reduce(
+      (lowest, row) => Math.min(lowest, row.price_per_hour),
+      Number.POSITIVE_INFINITY,
+    );
+    const lowestVisibleLatency = validRowsForValueIndex.reduce(
+      (lowest, row) => Math.min(lowest, row.estimated_latency_ms),
+      Number.POSITIVE_INFINITY,
+    );
+
+    return rowsWithLatency
+      .map((row) => {
+        const hasValidMetrics =
+          isPositiveFiniteNumber(row.price_per_hour) &&
+          isPositiveFiniteNumber(row.estimated_latency_ms) &&
+          isPositiveFiniteNumber(lowestVisiblePrice) &&
+          isPositiveFiniteNumber(lowestVisibleLatency);
+
+        const valueIndex = hasValidMetrics
+          ? ((row.price_per_hour / lowestVisiblePrice) + (row.estimated_latency_ms / lowestVisibleLatency)).toFixed(2)
+          : null;
+
+        return {
+          ...row,
+          value_index: valueIndex,
         };
       })
       .sort((a, b) => {
@@ -414,6 +449,7 @@ export default function App() {
                   <th>Estimated Cost / Hour</th>
                   <th>Latency</th>
                   <th>Provider Region</th>
+                  <th title="Combines hourly cost and estimated RTT into a single relative score. Lower is better.">Value Index</th>
                 </tr>
               </thead>
               <tbody>
@@ -430,6 +466,7 @@ export default function App() {
                       </div>
                     </td>
                     <td>{item.provider_region}</td>
+                    <td>{item.value_index ?? "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -455,11 +492,12 @@ export default function App() {
                   <th>Estimated Cost / Hour</th>
                   <th>Latency</th>
                   <th>Provider Region</th>
+                  <th title="Combines hourly cost and estimated RTT into a single relative score. Lower is better.">Value Index</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td colSpan="4">No provider offers are available for the selected GPU.</td>
+                  <td colSpan="5">No provider offers are available for the selected GPU.</td>
                 </tr>
               </tbody>
             </table>
