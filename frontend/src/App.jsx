@@ -1,4 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { apiFetch } from "./apiClient";
 import {
   COUNTRY_LOCATION_OPTIONS,
@@ -449,7 +455,25 @@ export default function App() {
                   <th>Estimated Cost / Hour</th>
                   <th>Latency</th>
                   <th>Provider Region</th>
-                  <th title="Combines hourly cost and estimated RTT into a single relative score. Lower is better.">Value Index</th>
+                  <th>
+                    <div className="flex items-center gap-2">
+                      <span>Value Index</span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-pointer text-gray-400 hover:text-white">
+                              ⓘ
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs text-sm leading-snug">
+                            Combines cost and latency into a single score:
+                            <br />
+                            (price vs lowest) + (latency vs lowest). Lower is better.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -472,6 +496,9 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          <p className="mt-3 text-sm text-gray-400">
+            Value Index = cost + latency efficiency score (lower is better)
+          </p>
           <p className="table-disclaimer">
             Estimated network RTT based on regional averages.
             Actual latency depends on network conditions.
@@ -492,7 +519,25 @@ export default function App() {
                   <th>Estimated Cost / Hour</th>
                   <th>Latency</th>
                   <th>Provider Region</th>
-                  <th title="Combines hourly cost and estimated RTT into a single relative score. Lower is better.">Value Index</th>
+                  <th>
+                    <div className="flex items-center gap-2">
+                      <span>Value Index</span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-pointer text-gray-400 hover:text-white">
+                              ⓘ
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs text-sm leading-snug">
+                            Combines cost and latency into a single score:
+                            <br />
+                            (price vs lowest) + (latency vs lowest). Lower is better.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -502,6 +547,9 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          <p className="mt-3 text-sm text-gray-400">
+            Value Index = cost + latency efficiency score (lower is better)
+          </p>
           <p className="table-disclaimer">
             Estimated network RTT based on regional averages.
             Actual latency depends on network conditions.
