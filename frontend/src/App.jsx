@@ -46,7 +46,7 @@ function units(value) {
 }
 
 export default function App() {
-  const [mode, setMode] = useState("use_case");
+  const [mode] = useState("use_case");
   const [skus, setSkus] = useState([]);
   const [uplifts, setUplifts] = useState([]);
   const [useCases, setUseCases] = useState([]);
@@ -254,14 +254,6 @@ export default function App() {
 
       <section className="panel-card">
         <div className="control-grid">
-          <label>
-            Mode
-            <select value={mode} onChange={(e) => setMode(e.target.value)}>
-              <option value="use_case">Use Case</option>
-              <option value="sku">SKU</option>
-            </select>
-          </label>
-
           {mode === "use_case" ? (
             <>
               <label>
@@ -421,7 +413,7 @@ export default function App() {
                   <th>Provider</th>
                   <th>Estimated Cost / Hour</th>
                   <th>Latency</th>
-                  <th>Region</th>
+                  <th>Provider Region</th>
                 </tr>
               </thead>
               <tbody>
@@ -462,7 +454,7 @@ export default function App() {
                   <th>Provider</th>
                   <th>Estimated Cost / Hour</th>
                   <th>Latency</th>
-                  <th>Region</th>
+                  <th>Provider Region</th>
                 </tr>
               </thead>
               <tbody>
@@ -482,7 +474,7 @@ export default function App() {
       {quote && mode === "use_case" && (
         <section className="panel-card">
           <header className="panel-head">
-            <h2>SKU Cost Breakdown</h2>
+            <h2>Hyperfusion Estimated Cost Breakdown</h2>
           </header>
           <div className="table-wrap">
             <table className="dash-table">
