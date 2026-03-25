@@ -1,18 +1,29 @@
 import asyncio
 import csv
 import io
+import logging
 import os
 import secrets
 import time
+from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
 REFRESH_SECONDS = 600
+RATE_LIMIT_WINDOW_SECONDS = 60
+DEFAULT_ALLOWED_ORIGINS = ("https://hyperfusion-pricing-tool.vercel.app",)
+GPU_TYPES = ("A100", "B200", "GH200", "H100", "H200", "L40S")
+REGIONS = ("All Regions", "North America", "Europe", "Asia-Pacific")
+RANK_OPTIONS = ("Best Overall", "Lowest Price", "Provider Name")
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,17 +48,44 @@ class Uplift:
     enabled: bool
 
 
+TrimmedString = Annotated[str, Field(min_length=1, max_length=200)]
+UpliftName = Annotated[str, Field(min_length=1, max_length=100)]
+
+
 class QuoteRequest(BaseModel):
-    mode: str = "sku"
-    sku_code: str | None = None
-    quantity: float | None = Field(default=None, gt=0)
-    use_case: str | None = None
-    hours: float | None = Field(default=None, gt=0)
-    customer: str | None = None
-    gpu_type: str | None = None
-    region: str | None = None
-    rank_results_by: str | None = None
-    uplift_names: list[str] | None = None
+    mode: Literal["sku", "use_case"] = "sku"
+    sku_code: TrimmedString | None = None
+    quantity: float | None = Field(default=None, gt=0, le=1000)
+    use_case: TrimmedString | None = None
+    hours: float | None = Field(default=None, gt=0, le=1000)
+    customer: Annotated[str, Field(max_length=200)] | None = None
+    gpu_type: Literal["A100", "B200", "GH200", "H100", "H200", "L40S"] | None = None
+    region: Literal["All Regions", "North America", "Europe", "Asia-Pacific"] | None = None
+    rank_results_by: Literal["Best Overall", "Lowest Price", "Provider Name"] | None = None
+    uplift_names: list[UpliftName] | None = Field(default=None, max_length=100)
+
+    @field_validator("sku_code", "use_case", "customer", mode="before")
+    @classmethod
+    def normalize_optional_string(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("uplift_names", mode="before")
+    @classmethod
+    def normalize_uplift_names(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise ValueError("Invalid request")
+        normalized = []
+        for item in value:
+            name = str(item).strip()
+            if not name:
+                raise ValueError("Invalid request")
+            normalized.append(name)
+        return normalized
 
 
 class DataStore:
@@ -163,36 +201,102 @@ class DataStore:
 
 store = DataStore()
 app = FastAPI(title="Pricing Tool API", version="1.0.0")
+rate_limit_store: dict[str, deque[float]] = defaultdict(deque)
+rate_limit_lock = asyncio.Lock()
+
+
+def _parse_allowed_origins() -> list[str]:
+    raw = os.getenv("ALLOWED_ORIGINS", "")
+    configured = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if configured:
+        return configured
+
+    vercel_url = (os.getenv("VERCEL_URL") or "").strip()
+    if vercel_url:
+        return [f"https://{vercel_url}"]
+
+    return list(DEFAULT_ALLOWED_ORIGINS)
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip() or "unknown"
+
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    if real_ip:
+        return real_ip
+
+    if request.client and request.client.host:
+        return request.client.host
+
+    return "unknown"
+
+
+async def _enforce_rate_limit(request: Request, limit_key: str, max_requests: int) -> None:
+    # This limiter is instance-local and approximate. Move enforcement to shared
+    # edge or infrastructure controls for stronger protection across replicas.
+    ip_address = _get_client_ip(request)
+    now = time.monotonic()
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+    bucket = f"{limit_key}:{ip_address}"
+
+    async with rate_limit_lock:
+        timestamps = rate_limit_store[bucket]
+        while timestamps and timestamps[0] <= window_start:
+            timestamps.popleft()
+
+        if len(timestamps) >= max_requests:
+            logger.warning("Rate limit exceeded for %s on %s", ip_address, request.url.path)
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+        timestamps.append(now)
+
+
+def _build_rate_limiter(limit_key: str, max_requests: int):
+    async def dependency(request: Request) -> None:
+        await _enforce_rate_limit(request, limit_key, max_requests)
+
+    return dependency
+
+
+health_rate_limit = _build_rate_limiter("health", 30)
+skus_rate_limit = _build_rate_limiter("skus", 60)
+uplifts_rate_limit = _build_rate_limiter("uplifts", 60)
+use_cases_rate_limit = _build_rate_limiter("use_cases", 60)
+quote_rate_limit = _build_rate_limiter("quote", 20)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_parse_allowed_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "x-api-key"],
 )
 
 
-def require_api_key(x_api_key: str | None = Header(default=None, alias="x-api-key")) -> None:
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.warning("Invalid request validation for %s from %s", request.url.path, _get_client_ip(request))
+    return JSONResponse(status_code=422, content={"detail": "Invalid request"})
+
+
+def require_api_key(request: Request, x_api_key: str | None = Header(default=None, alias="x-api-key")) -> None:
     expected_key = (os.getenv("PRICING_API_KEY") or "").strip()
     if not expected_key:
-        raise HTTPException(status_code=500, detail="Server API key is not configured")
+        logger.error("API key check unavailable for %s", request.url.path)
+        raise HTTPException(status_code=503, detail="Service unavailable")
     if not x_api_key or not secrets.compare_digest(x_api_key, expected_key):
+        logger.warning("Invalid API key attempt from %s on %s", _get_client_ip(request), request.url.path)
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-@app.get("/health")
+@app.get("/health", dependencies=[Depends(health_rate_limit)])
 async def health() -> dict[str, Any]:
-    await store.ensure_fresh()
-    return {
-        "ok": True,
-        "sku_count": len(store.skus),
-        "uplift_count": len(store.uplifts),
-        "use_case_count": len(store.use_cases),
-    }
+    return {"ok": True}
 
 
-@app.get("/skus", dependencies=[Depends(require_api_key)])
+@app.get("/skus", dependencies=[Depends(skus_rate_limit), Depends(require_api_key)])
 async def get_skus() -> list[dict[str, Any]]:
     await store.ensure_fresh()
     return [
@@ -207,7 +311,7 @@ async def get_skus() -> list[dict[str, Any]]:
     ]
 
 
-@app.get("/uplifts", dependencies=[Depends(require_api_key)])
+@app.get("/uplifts", dependencies=[Depends(uplifts_rate_limit), Depends(require_api_key)])
 async def get_uplifts() -> list[dict[str, Any]]:
     await store.ensure_fresh()
     return [
@@ -220,7 +324,7 @@ async def get_uplifts() -> list[dict[str, Any]]:
     ]
 
 
-@app.get("/use-cases", dependencies=[Depends(require_api_key)])
+@app.get("/use-cases", dependencies=[Depends(use_cases_rate_limit), Depends(require_api_key)])
 async def get_use_cases() -> list[str]:
     await store.ensure_fresh()
     return store.use_cases
@@ -232,14 +336,14 @@ def _resolve_uplifts(uplift_names: list[str] | None) -> list[Uplift]:
 
     missing = [name for name in uplift_names if name not in store.uplifts]
     if missing:
-        raise HTTPException(status_code=400, detail=f"Unknown uplifts: {missing}")
+        raise HTTPException(status_code=400, detail="Invalid request")
     return [store.uplifts[name] for name in uplift_names]
 
 
 def _calculate_sku_quote(sku_code: str, quantity: float, uplift_names: list[str] | None) -> dict[str, Any]:
     sku = store.skus.get(sku_code)
     if not sku:
-        raise HTTPException(status_code=404, detail=f"Unknown sku_code: {sku_code}")
+        raise HTTPException(status_code=404, detail="Not found")
 
     relative_units = quantity / sku.unit
     base_cost = relative_units * sku.base_unit_price
@@ -279,26 +383,23 @@ def _calculate_sku_quote(sku_code: str, quantity: float, uplift_names: list[str]
     }
 
 
-@app.post("/quote", dependencies=[Depends(require_api_key)])
+@app.post("/quote", dependencies=[Depends(quote_rate_limit), Depends(require_api_key)])
 async def quote(payload: QuoteRequest) -> dict[str, Any]:
     await store.ensure_fresh()
     if payload.mode == "sku":
         if not payload.sku_code:
-            raise HTTPException(status_code=400, detail="sku_code is required for mode=sku")
+            raise HTTPException(status_code=400, detail="Invalid request")
         if payload.quantity is None or payload.quantity <= 0:
-            raise HTTPException(status_code=400, detail="quantity must be > 0 for mode=sku")
+            raise HTTPException(status_code=400, detail="Invalid request")
         return _calculate_sku_quote(payload.sku_code, payload.quantity, payload.uplift_names)
 
     if payload.mode == "use_case":
         if not payload.use_case:
-            raise HTTPException(status_code=400, detail="use_case is required for mode=use_case")
+            raise HTTPException(status_code=400, detail="Invalid request")
         if payload.use_case not in store.use_cases:
-            raise HTTPException(
-                status_code=400,
-                detail=f"use_case not found: {payload.use_case}",
-            )
+            raise HTTPException(status_code=400, detail="Invalid request")
         if payload.hours is None or payload.hours <= 0:
-            raise HTTPException(status_code=400, detail="hours must be > 0 for mode=use_case")
+            raise HTTPException(status_code=400, detail="Invalid request")
 
         breakdown: list[dict[str, Any]] = []
         grand_total_usd = 0.0
@@ -334,4 +435,4 @@ async def quote(payload: QuoteRequest) -> dict[str, Any]:
             "breakdown": breakdown,
         }
 
-    raise HTTPException(status_code=400, detail="mode must be either 'sku' or 'use_case'")
+    raise HTTPException(status_code=400, detail="Invalid request")

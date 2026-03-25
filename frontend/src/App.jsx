@@ -55,6 +55,19 @@ function isPositiveFiniteNumber(value) {
   return Number.isFinite(value) && value > 0;
 }
 
+function getUserFacingErrorMessage(status, fallbackMessage) {
+  if (status === 401) {
+    return "Unable to access calculator data right now.";
+  }
+  if (status === 429) {
+    return "Too many requests. Please wait a moment and try again.";
+  }
+  if (status >= 500) {
+    return "The calculator is temporarily unavailable. Please try again shortly.";
+  }
+  return fallbackMessage;
+}
+
 export default function App() {
   const [mode] = useState("use_case");
   const [skus, setSkus] = useState([]);
@@ -91,20 +104,13 @@ export default function App() {
           apiFetch(`${API_BASE}/use-cases`),
         ]);
         if (!skusResp.ok || !upliftsResp.ok || !useCasesResp.ok) {
-          const messages = [];
-          for (const resp of [skusResp, upliftsResp, useCasesResp]) {
-            if (!resp.ok) {
-              let detail = "";
-              try {
-                const body = await resp.clone().json();
-                detail = body?.detail || "";
-              } catch {
-                detail = "";
-              }
-              messages.push(`${resp.url} -> ${resp.status}${detail ? ` (${detail})` : ""}`);
-            }
-          }
-          throw new Error(`Failed to load initial data. ${messages.join(" | ")}`);
+          const firstFailedResponse = [skusResp, upliftsResp, useCasesResp].find((resp) => !resp.ok);
+          throw new Error(
+            getUserFacingErrorMessage(
+              firstFailedResponse?.status,
+              "Unable to load calculator data. Please try again.",
+            ),
+          );
         }
 
         const skusRaw = await skusResp.json();
@@ -180,7 +186,12 @@ export default function App() {
       });
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data.detail || "Quote request failed");
+        throw new Error(
+          getUserFacingErrorMessage(
+            resp.status,
+            "Unable to calculate quote. Please review your inputs and try again.",
+          ),
+        );
       }
       setQuote(data);
 
@@ -214,7 +225,12 @@ export default function App() {
             ...(competitorOffersByRegion["Asia-Pacific"] || []),
           ]
         : competitorOffersByRegion[region] || [];
-    const filteredRows = getCheapestOffersForGpu([hyperfusionRow, ...competitorRows], gpuType);
+    const filteredRows =
+      region === "All Regions"
+        ? [hyperfusionRow, ...competitorRows].filter(
+            (row) => row && row.provider && row.gpu === gpuType,
+          )
+        : getCheapestOffersForGpu([hyperfusionRow, ...competitorRows], gpuType);
     const hyperfusionLatencyMs = getEstimatedRttMs(selectedLatencyZone, "MENA");
 
     const rowsWithLatency = filteredRows
