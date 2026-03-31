@@ -1,10 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { apiFetch } from "./apiClient";
 import {
   COUNTRY_LOCATION_OPTIONS,
@@ -474,20 +468,12 @@ export default function App() {
                   <th>
                     <div className="flex items-center gap-2">
                       <span>Value Index</span>
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="cursor-pointer text-gray-400 hover:text-white">
-                              ⓘ
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs text-sm leading-snug">
-                            Combines cost and latency into a single score:
-                            <br />
-                            (price vs lowest) + (latency vs lowest). Lower is better.
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
+                      <span
+                        className="cursor-help text-gray-400"
+                        title={"Combines cost and latency into a single score:\n(price vs lowest) + (latency vs lowest). Lower is better."}
+                      >
+                        ⓘ
+                      </span>
                     </div>
                   </th>
                 </tr>
@@ -538,20 +524,12 @@ export default function App() {
                   <th>
                     <div className="flex items-center gap-2">
                       <span>Value Index</span>
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="cursor-pointer text-gray-400 hover:text-white">
-                              ⓘ
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs text-sm leading-snug">
-                            Combines cost and latency into a single score:
-                            <br />
-                            (price vs lowest) + (latency vs lowest). Lower is better.
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
+                      <span
+                        className="cursor-help text-gray-400"
+                        title={"Combines cost and latency into a single score:\n(price vs lowest) + (latency vs lowest). Lower is better."}
+                      >
+                        ⓘ
+                      </span>
                     </div>
                   </th>
                 </tr>
